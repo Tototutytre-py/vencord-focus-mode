@@ -16,6 +16,7 @@ const settings = definePluginSettings({
         options: [
             { label: "English", value: "en" },
             { label: "Português (BR)", value: "pt-br" },
+            { label: "Français", value: "fr" },
         ],
     },
     showGuildToggle: {
@@ -28,6 +29,11 @@ const settings = definePluginSettings({
         default: false,
         description: "Show separate button to hide sidebar / Mostrar botão separado para ocultar barra lateral",
     },
+    showBlurToggle: {
+        type: OptionType.BOOLEAN,
+        default: false,
+        description: "Show separate button to blur conversation / Mostrar botão separado para flouter a conversa / Montrer un bouton séparé pour flouter la conversation",
+    },
 });
 
 const i18n = {
@@ -38,6 +44,8 @@ const i18n = {
         guildHide: "Hide servers",
         sidebarShow: "Show sidebar",
         sidebarHide: "Hide sidebar",
+        blurOn: "Unblur chat",
+        blurOff: "Blur chat",
         description: "Hide the server list and sidebar with one click to focus on chat/call. Optional extra buttons in settings.",
     },
     "pt-br": {
@@ -47,7 +55,20 @@ const i18n = {
         guildHide: "Ocultar servidores",
         sidebarShow: "Mostrar barra lateral",
         sidebarHide: "Ocultar barra lateral",
+        blurOn: "Desfocar chat",
+        blurOff: "Flouter chat",
         description: "Oculta a lista de servidores e barra lateral com um clique para focar no chat/call. Botões extras opcionais nas configurações.",
+    },
+    "fr": {
+        focusOn: "Mode Focus",
+        focusOff: "Quitter le mode focus",
+        guildShow: "Afficher les serveurs",
+        guildHide: "Masquer les serveurs",
+        sidebarShow: "Afficher la barre latérale",
+        sidebarHide: "Masquer la barre latérale",
+        blurOn: "Dés-flouter chat",
+        blurOff: "Flouter chat",
+        description: "Masque la liste des serveurs et la barre latérale d'un clic pour vous concentrer sur le chat/l'appel. Boutons supplémentaires optionnels dans les paramètres.",
     },
 };
 
@@ -63,11 +84,13 @@ let observer: MutationObserver | null = null;
 let focusHidden = false;
 let guildHidden = false;
 let sidebarHidden = false;
+let chatBlurred = false;
 
 // Buttons
 let focusBtn: HTMLDivElement | null = null;
 let guildBtn: HTMLDivElement | null = null;
 let sidebarBtn: HTMLDivElement | null = null;
+let blurBtn: HTMLDivElement | null = null;
 
 function applyCSS() {
     if (!styleEl) {
@@ -110,6 +133,16 @@ function applyCSS() {
             }
             [class*="panels_"] {
                 display: none !important;
+            }
+        `);
+    }
+
+    if (chatBlurred) {
+        rules.push(`
+            [class*="chatContent_"] {
+                filter: blur(8px) !important;
+                pointer-events: none !important;
+                user-select: none !important;
             }
         `);
     }
@@ -170,6 +203,11 @@ function updateButtons() {
         sidebarBtn.title = (sidebarHidden || focusHidden) ? t("sidebarShow") : t("sidebarHide");
         sidebarBtn.style.backgroundColor = (sidebarHidden || focusHidden) ? "#ed4245" : "#faa61a";
     }
+    if (blurBtn) {
+        blurBtn.textContent = chatBlurred ? "👁" : "👁‍🗨";
+        blurBtn.title = chatBlurred ? t("blurOn") : t("blurOff");
+        blurBtn.style.backgroundColor = chatBlurred ? "#ed4245" : "#9c27b0";
+    }
 }
 
 function toggleFocus() {
@@ -186,6 +224,12 @@ function toggleGuild() {
 
 function toggleSidebar() {
     sidebarHidden = !sidebarHidden;
+    applyCSS();
+    updateButtons();
+}
+
+function toggleBlur() {
+    chatBlurred = !chatBlurred;
     applyCSS();
     updateButtons();
 }
@@ -222,6 +266,17 @@ function injectButtons() {
         leading.querySelector(".vc-focusMode-sidebar")?.remove();
         sidebarBtn = null;
     }
+
+    // Blur toggle (optional)
+    if (settings.store.showBlurToggle && !leading.querySelector(".vc-focusMode-blur")) {
+        blurBtn = makeBtn("vc-focusMode-blur", "Toggle Blur Chat", toggleBlur);
+        updateButtons();
+        leading.appendChild(blurBtn);
+    }
+    if (!settings.store.showBlurToggle && leading.querySelector(".vc-focusMode-blur")) {
+        leading.querySelector(".vc-focusMode-blur")?.remove();
+        blurBtn = null;
+    }
 }
 
 function startObserver() {
@@ -255,11 +310,14 @@ export default definePlugin({
         focusBtn?.remove();
         guildBtn?.remove();
         sidebarBtn?.remove();
+        blurBtn?.remove();
         focusBtn = null;
         guildBtn = null;
         sidebarBtn = null;
+        blurBtn = null;
         focusHidden = false;
         guildHidden = false;
         sidebarHidden = false;
+        chatBlurred = false;
     },
 });
