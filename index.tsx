@@ -7,6 +7,7 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
+import { aiAssistantSettings } from "./aiAssistant/settings";
 
 const settings = definePluginSettings({
     language: {
@@ -45,6 +46,8 @@ const settings = definePluginSettings({
         default: "1234",
         secret: true,
     },
+    // AI Assistant settings
+    ...aiAssistantSettings,
 });
 
 const i18n = {
@@ -333,18 +336,173 @@ function startObserver() {
     observer.observe(document.body, { childList: true, subtree: true });
 }
 
+// ============================================
+// AI ASSISTANT INTEGRATION
+// ============================================
+
+import { injectAIAssistantButton, removeAIAssistantButton } from "./aiAssistant/ui";
+import { createAIProvider } from "./aiAssistant/aiProvider";
+import { MessageReceiver } from "./aiAssistant/messageReceiver";
+
+let aiMessageReceiver: MessageReceiver | null = null;
+let currentChannelId: string | null = null;
+
+/**
+ * Initialise le récepteur de messages IA
+ */
+function initializeAIAssistant() {
+    if (!settings.store.enableAIAssistant) return;
+
+    // Créer le fournisseur IA approprié
+    const aiProvider = createAIProvider(
+        settings.store.aiProvider as "openai" | "ollama",
+        settings.store.openaiKey,
+        settings.store.openaiModel,
+        settings.store.ollamaUrl,
+        settings.store.ollamaModel
+    );
+
+    // Créer le récepteur de messages
+    aiMessageReceiver = new MessageReceiver({
+        onResponseGenerated: (response) => {
+            // Insérer la réponse dans la barre de saisie
+            insertResponseIntoInput(response);
+        },
+        onError: (error) => {
+            console.error("AI Assistant Error:", error);
+            // Optionnel: afficher une notification d'erreur
+        },
+    });
+
+    aiMessageReceiver.setAIProvider(aiProvider);
+}
+
+/**
+ * Insère une réponse IA dans la zone de saisie du message
+ */
+function insertResponseIntoInput(response: string) {
+    try {
+        // Récupérer le textarea de saisie
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+            'textarea[placeholder*="Message"]'
+        );
+        
+        if (!textarea) {
+            console.warn("Message textarea not found");
+            return;
+        }
+
+        // Insérer le texte (sans envoyer automatiquement)
+        textarea.value = response;
+        
+        // Déclencher l'événement input pour mettre à jour l'UI
+        const inputEvent = new Event("input", { bubbles: true });
+        textarea.dispatchEvent(inputEvent);
+
+        // Focus sur le textarea pour que l'utilisateur puisse l'éditer
+        textarea.focus();
+    } catch (error) {
+        console.error("Error inserting response:", error);
+    }
+}
+
+/**
+ * Configure le bouton d'Assistant IA
+ */
+function setupAIAssistantButton() {
+    if (!settings.store.enableAIAssistant) return;
+
+    try {
+        // Récupérer le canal actuel
+        const message = document.querySelector<HTMLElement>('textarea[placeholder*="Message"]');
+        if (!message) return;
+
+        // Injecter le bouton avec le handler
+        injectAIAssistantButton(currentChannelId || "unknown", async (channelId, enabled) => {
+            console.log(`AI Assistant ${enabled ? "enabled" : "disabled"} for channel ${channelId}`);
+            
+            if (enabled && aiMessageReceiver) {
+                // Le profil de style sera construit à la première réception de message
+                console.log("AI Assistant ready for this conversation");
+            }
+        });
+    } catch (error) {
+        console.error("Error setting up AI button:", error);
+    }
+}
+
+/**
+ * Monitore les changements de canal
+ */
+function watchChannelChanges() {
+    if (!settings.store.enableAIAssistant) return;
+
+    // Utiliser un MutationObserver pour détecter les changements de canal
+    const channelObserver = new MutationObserver(() => {
+        // Vérifier si le canal a changé
+        const newChannelId = detectCurrentChannel();
+        
+        if (newChannelId && newChannelId !== currentChannelId) {
+            currentChannelId = newChannelId;
+            setupAIAssistantButton();
+        }
+    });
+
+    channelObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+    });
+}
+
+/**
+ * Détecte le canal actuellement actif
+ */
+function detectCurrentChannel(): string | null {
+    try {
+        // Chercher l'ID du canal dans les attributs de l'UI
+        // Cette implémentation peut varier selon la version de Discord
+        const channelElement = document.querySelector<HTMLElement>(
+            '[class*="chat-"] h1, [class*="title_"]'
+        );
+        
+        if (!channelElement) return null;
+
+        // Essayer d'extraire l'ID depuis l'URL ou les attributs
+        const href = window.location.href;
+        const match = href.match(/channels\/\d+\/(\d+)/);
+        
+        return match ? match[1] : null;
+    } catch {
+        return null;
+    }
+}
+
+// ============================================
+// MAIN PLUGIN DEFINITION
+// ============================================
+
 export default definePlugin({
     name: "FocusMode",
-    description: "Hide server list & sidebar with one click to focus on chat/call. | Oculta servidores e barra lateral para focar no chat/call.",
+    description: "Hide server list & sidebar with one click to focus on chat/call. | Oculta servidores e barra lateral para focar no chat/call. + AI Assistant per-conversation mode.",
     authors: [Devs.Ven],
     settings,
 
     start() {
+        // Focus Mode features
         startObserver();
         injectButtons();
+
+        // AI Assistant features
+        if (settings.store.enableAIAssistant) {
+            initializeAIAssistant();
+            watchChannelChanges();
+            setupAIAssistantButton();
+        }
     },
 
     stop() {
+        // Clean up Focus Mode
         styleEl?.remove();
         styleEl = null;
         observer?.disconnect();
@@ -364,5 +522,11 @@ export default definePlugin({
         sidebarHidden = false;
         chatBlurred = false;
         discordLocked = false;
+
+        // Clean up AI Assistant
+        removeAIAssistantButton();
+        aiMessageReceiver?.resetCache();
+        aiMessageReceiver = null;
+        currentChannelId = null;
     },
 });
